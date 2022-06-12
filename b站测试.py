@@ -195,8 +195,15 @@ class Bilibili():
             lan = yz[i]['lan']                              #获取字幕的语言编号（ZH JP EN之类）
             suburl = 'http:'+yz[i]['subtitle_url']                  #获取字幕的URL
             mingl = ming + '_P' + str(p) +'_' + lan         #根据视频名、P数和语言生成字幕文件名
-            urllib.request.urlretrieve(suburl,'%s.json'%mingl)  #下载json
-            self.__jsonZhuanSrt(mingl,bvid_dict['data'][i]['part'])                                 #处理json输出srt
+            #response = urllib.request.urlopen(subUrl) 
+            #urllib.request.urlretrieve(suburl,'%s.json'%mingl) 
+            response = urllib.request.urlopen( suburl)               # 不下载了，直接获取内容
+            if response.info().get('Content-Encoding') == 'gzip':   # 在响应头中获取编码格式
+                j = gzip.decompress(response.read())
+            else:
+                j = response.read()
+            #jsonToSrt (name, j)            
+            self.__jsonZhuanSrt(mingl,bvid_dict['data'][i]['part'],j)                                 #处理json输出srt
             i += 1
             print ('P%s 第%s种语言下载完成，进度：%s/%s'%(p,i,i,ii))    #报告任务进度（以该P视频的字幕语言数算）
             time.sleep(0.2)
@@ -210,40 +217,27 @@ class Bilibili():
         #zidian= json.loads(jieshou.text)['data']                   #载入字典
         print ('视频目录获取成功！共%sP。\n'%len(bvid_dict['data']))             #汇报
         return bvid_dict            #返回列表
-	
-    def __jsonZhuanSrt(self,ming,bvid_name):
-        #判断是否经过压缩
-        try:
-            wenjian = open('%s.json'%ming,encoding='utf-8')
-            res=wenjian.read()
-        except:
-            wenjian = open('%s.json'%ming,'rb')
-            data=wenjian.read()
-            buff = BytesIO(data)
-            f = gzip.GzipFile(fileobj=buff)
-            res = f.read().decode('utf-8')
-                
 
-        zidian = json.loads(res)['body']            #Json传入字典
-        try:
-            wenjian.close()
-            f.close()
-        except:
-            pass
-        os.remove('%s.json'%ming)
+    def __jsonZhuanSrt(self,ming,bvid_name,j):
+        #判断是否经过压缩
+        data = json.loads(j)['body']
         my_path=self.save_path+'/'+'%s.srt'%bvid_name
-        wenjian = open(my_path,'w',encoding='utf-8') #创建srt字幕文件
-        i = 0                                   #计数变量
-        while i<len(zidian):                    #循环处理每一条字幕
-            f = round(zidian[i]['from'],3)      #开始时间 （round(n，3)四舍五入为三位小数）
-            t = round(zidian[i]['to'],3)        #结束时间
-            c = zidian[i]['content']            #字幕
-            ff = time.strftime("%H:%M:%S",time.gmtime(f)) + ',' + self.__miao(f)   #秒数转 时:分:秒 格式，加逗号和毫秒
-            tt = time.strftime("%H:%M:%S",time.gmtime(t)) + ',' + self.__miao(t)   #结束时间，处理方式同上
-            shujv = str(i+1)+'\n' + ff+' '+'-->'+' '+tt+'\n' + c+'\n\n'     #格式化为Srt字幕
-            wenjian.write(shujv)                                            #写入
-            i += 1                                                          #计数器+1
-        print ('%s OK.'%bvid_name)
+        file = open(my_path,'w',encoding='utf-8') #创建srt字幕文件
+        i = 1   # Srt字幕的序号计数器
+        for d in data:
+            f = round(d['from'],3)      # 开始时间 （round(n，3)四舍五入为三位小数）
+            t = round(d['to'],3)        # 结束时间
+            c = d['content']            # 字幕内容
+            ff = time.strftime("%H:%M:%S",time.gmtime(f)) + ',' + self.__miao(f)   # 开始时间，秒数转 时:分:秒 格式，加逗号、毫秒修正为三位
+            tt = time.strftime("%H:%M:%S",time.gmtime(t)) + ',' + self.__miao(t)   # 结束时间，处理方式同上
+
+            srt = str(i) + '\n' + ff + ' ' + '-->' + ' ' + tt + '\n' + c + '\n\n'     # 格式化为Srt字幕
+            file.write(srt)             # 写入文件
+            i += 1                      # 计数器+1
+
+        file.close()
+        print ('%s OK.' % bvid_name)
+   
 	
     def __miao(self,miao):                       #修正毫秒为三位
         miao = str(miao).partition('.')[2]    #取小数部分
@@ -270,8 +264,8 @@ class Bilibili():
              #调用实际下载函数
             self.__downFolder(bili_folder['fold_name'][folder_num],bili_folder['fold_id'][folder_num],bili_folder['media_count'][folder_num])
         except:
-            print("up号错误")
-            os._exit(1)
+            print("收藏夹已下完或者下载错误")
+            #os._exit(1)
 
     def getFolderIfno(self,up_mid:str)->dict:
         params = {'up_mid':up_mid}
@@ -287,13 +281,14 @@ class Bilibili():
     
     def __getLocalVideoInfo(self):
         time_list=[]
-        if os.path.exists('videoinfo.txt'):
+        if os.path.exists('./videoinfo.txt'):
             p=open('./videoinfo.txt','r')
             VideoInfo=p.readlines()
+            p.close()
             #清除换行符
             for i in range(0,len(VideoInfo)):
                 VideoInfo[i]=VideoInfo[i][: -1]
-            p.close()
+            
             return VideoInfo
             #print(str(time_list[0])+"  "+str(time_list[1]))
         else:
@@ -316,21 +311,24 @@ class Bilibili():
             down_queue=response_json['data']['medias']
             for i in down_queue:
                 bvid_queue.append(i['bvid'])
+            print("已读取该收藏夹第{}页\n".format(params['pn']))
             params['pn']+=1
-            time.sleep(3)
+            time.sleep(1)
+            
         #去除已经下载的视频
         bvid_queue=self.__pickDuplicate(bvid_queue,downed_video)
         #遍历下载
         f=open('./videoinfo.txt','a',encoding='utf-8')
         for i in bvid_queue:
             self.__downloadVideo(i)
-            if not (i in downed_video):
-                f.write(str(i)+'\n')
+            #if not (i in downed_video):
+            f.write(str(i)+'\n')
             try:
                 self.getVideoSrt(i)
             except:
                 print("{} 字幕下载失败 ".format(i))
         f.close()
+        return True
 
         
     def __pickDuplicate(self,bvid_queue,downed_video):
@@ -338,9 +336,10 @@ class Bilibili():
             if i in bvid_queue:
                 bvid_queue.remove(i)
         if (len(bvid_queue)==0):
-            print("无需下载")
+            print("该收藏夹已经被全部下载")
             sys.exit(0)
         return bvid_queue
+
 
 
 
